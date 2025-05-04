@@ -323,8 +323,10 @@ def main():
                     global_step,
                 )
 
-            # checkpointing
-            if global_step % 5000 == 0:
+            # Save final model checkpoint
+            if epoch == args.num_epochs - 1:
+                os.makedirs(CHECKPOINTS_PATH, exist_ok=True)
+
                 torch.save(
                     decoder_encoder_optim.state_dict(),
                     join(CHECKPOINTS_PATH, EXP_NAME + "_optim.pth"),
@@ -337,13 +339,9 @@ def main():
                     decoder.state_dict(),
                     join(CHECKPOINTS_PATH, EXP_NAME + "_decoder.pth"),
                 )
-                torch.save(
-                    decoder.state_dict(),
-                    join(CHECKPOINTS_PATH, EXP_NAME + "_decoder.pth"),
-                )
-                f = open(join(CHECKPOINTS_PATH, EXP_NAME + "_variables.txt"), "w")
-                f.write(str(global_step))
-                f.close()
+                with open(join(CHECKPOINTS_PATH, EXP_NAME + "_variables.txt"), "w") as f:
+                    f.write(str(global_step))
+
 
     writer.export_scalars_to_json("./all_scalars.json")
     writer.close()
