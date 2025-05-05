@@ -324,7 +324,7 @@ def main():
                 )
 
             # Save final model checkpoint
-            if epoch == args.num_epochs - 1:
+            if i_epoch == args.num_epochs - 1:
                 os.makedirs(CHECKPOINTS_PATH, exist_ok=True)
 
                 torch.save(
