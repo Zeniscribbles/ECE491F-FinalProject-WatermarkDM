@@ -209,7 +209,9 @@ def embed_fingerprints():
 def main():
 
     # operate on cifar10 dataset
-    args.encoder_path   = "./_output/cifar10_64/checkpoints/*.pth"
+    # args.encoder_path   = "./_output/cifar10_64/checkpoints/*.pth"
+    if args.encoder_path is None:
+        args.encoder_path = "./_output/cifar10_64/checkpoints/*.pth"
     args.image_resolution = 32
     
     # ------------------------------------- #
