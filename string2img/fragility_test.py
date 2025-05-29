@@ -1,101 +1,95 @@
+# @brief: Phase 2 - Fragility Testing
+# This script evaluates the robustness of embedded watermarks in CIFAR-10 images
+# against various image attacks (blur, noise, crop). It reports bitwise accuracy,
+# MSE, SSIM, and PSNR for each attack.
+
 import os
-import io
-from PIL import Image, ImageFilter
+import glob
 import torch
-from torchvision.transforms import ToTensor
-from models import StegaStampDecoder
-from tqdm import tqdm
+import torch.nn.functional as F
+from torchvision import transforms
+from torchvision.utils import save_image
+from PIL import Image, ImageFilter
+from skimage.metrics import structural_similarity as ssim
+from skimage.metrics import peak_signal_noise_ratio as psnr
 
-=================================================================
-# Run in Google Colab using: !python string2img/fragility_test.py
-=================================================================
+from models import StegaStampEncoder, StegaStampDecoder  # Adjust if needed
 
-# ----------------------------
-# Configs
-# ----------------------------
-IMAGE_RESOLUTION = 32
-IMAGE_CHANNELS = 3
-FINGERPRINT_SIZE = 64
+# ---------- Metrics ----------
+def compute_attack_metrics(original, perturbed, fingerprint_gt, fingerprint_pred):
+    fingerprint_pred_bin = (fingerprint_pred > 0).long()
+    bitwise_accuracy = (fingerprint_pred_bin == fingerprint_gt).float().mean().item()
 
-# === UPDATE THIS: to the latest decoder you trained ===
-DECODER_PATH = "./_output/cifar10/checkpoints/stegastamp_64_07052025_00:20:32_decoder.pth"
+    mse = F.mse_loss(original, perturbed).item()
+    o_np = original.squeeze().permute(1, 2, 0).detach().cpu().numpy()
+    p_np = perturbed.squeeze().permute(1, 2, 0).detach().cpu().numpy()
+    ssim_val = ssim(o_np, p_np, channel_axis=2, data_range=1.0)
+    psnr_val = psnr(o_np, p_np, data_range=1.0)
 
-# Directory structure
-IMAGE_DIR = "../edm/datasets/embedded/cifar10/images"
-NOTE_DIR = "../edm/datasets/embedded/cifar10/note"
+    print(f"Bitwise Accuracy: {bitwise_accuracy:.4f}")
+    print(f"MSE: {mse:.4f}")
+    print(f"SSIM: {ssim_val:.4f}")
+    print(f"PSNR: {psnr_val:.2f} dB")
 
-# ----------------------------
-# Image Transformations
-# ----------------------------
+# ---------- Checkpoint Finder ----------
+def get_latest_checkpoint_pair(checkpoint_dir, bit_length=None):
+    pattern = f'stegastamp_{bit_length}_*_decoder.pth' if bit_length else '*_decoder.pth'
+    decoder_files = sorted(glob.glob(os.path.join(checkpoint_dir, pattern)))
+    if not decoder_files:
+        raise FileNotFoundError(f"No decoder found in {checkpoint_dir}")
+    decoder_path = decoder_files[-1]
+    encoder_path = decoder_path.replace('decoder', 'encoder')
+    if not os.path.exists(encoder_path):
+        raise FileNotFoundError(f"Encoder not found for {decoder_path}")
+    return encoder_path, decoder_path
 
-def jpeg_compress(image, quality=50):
-    buffer = io.BytesIO()
-    image.save(buffer, format='JPEG', quality=quality)
-    buffer.seek(0)
-    return Image.open(buffer)
+# ---------- Fingerprint Generator ----------
+def generate_fingerprint(bit_length, batch_size):
+    return torch.randint(0, 2, (batch_size, bit_length)).float()
 
-def blur_image(image, radius=1):
-    return image.filter(ImageFilter.GaussianBlur(radius))
+# ---------- Attacks ----------
+def apply_attack(tensor_images, attack_type='blur'):
+    attacked = []
+    for img in tensor_images:
+        pil = transforms.ToPILImage()(img)
+        if attack_type == 'blur':
+            pil = pil.filter(ImageFilter.GaussianBlur(radius=2))
+        elif attack_type == 'noise':
+            noisy = img + 0.2 * torch.randn_like(img)
+            pil = transforms.ToPILImage()(torch.clamp(noisy, 0, 1))
+        elif attack_type == 'crop':
+            pil = pil.crop((4, 4, 28, 28)).resize((32, 32))
+        attacked.append(transforms.ToTensor()(pil))
+    return torch.stack(attacked)
 
-def add_noise(tensor_img, noise_level=0.1):
-    noise = torch.randn_like(tensor_img) * noise_level
-    return torch.clamp(tensor_img + noise, 0, 1)
+# ---------- Fragility Testing ----------
+def test_fragility_all_attacks(encoder_path, decoder_path, attacks, batch_size=16, bit_length=64, image_resolution=32):
+    device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
+    encoder = StegaStampEncoder(image_resolution, 3, fingerprint_size=bit_length).to(device)
+    decoder = StegaStampDecoder(image_resolution, 3, fingerprint_size=bit_length).to(device)
+    encoder.load_state_dict(torch.load(encoder_path, map_location=device))
+    decoder.load_state_dict(torch.load(decoder_path, map_location=device))
+    encoder.eval()
+    decoder.eval()
 
-# ----------------------------
-# Load Decoder
-# ----------------------------
-decoder = StegaStampDecoder(
-    image_resolution=IMAGE_RESOLUTION,
-    image_channels=IMAGE_CHANNELS,
-    fingerprint_size=FINGERPRINT_SIZE
-)
-decoder.load_state_dict(torch.load(DECODER_PATH))
-decoder.eval().cuda()
+    dummy_img = torch.ones((batch_size, 3, image_resolution, image_resolution)).to(device)
+    fingerprint_gt = generate_fingerprint(bit_length, batch_size).to(device)
+    embedded = encoder(fingerprint_gt, dummy_img)
 
-# ----------------------------
-# Run Tests
-# ----------------------------
+    save_image(embedded.cpu(), "embedded_clean.png")
 
-def run_test(attack_fn, attack_name):
-    print(f"\n=== Testing robustness against: {attack_name} ===")
+    for attack in attacks:
+        print(f"\n--- Attack: {attack} ---")
+        attacked = apply_attack(embedded.cpu(), attack_type=attack).to(device)
+        save_image(attacked.cpu(), f"embedded_attacked_{attack}.png")
+        with torch.no_grad():
+            fingerprint_pred = decoder(attacked)
+        compute_attack_metrics(embedded[0], attacked[0], fingerprint_gt[0], fingerprint_pred[0])
 
-    for folder in sorted(os.listdir(NOTE_DIR)):
-        note_path = os.path.join(NOTE_DIR, folder, "embedded_fingerprints.txt")
-        image_folder = os.path.join(IMAGE_DIR, folder)
-
-        if not os.path.exists(note_path):
-            continue
-
-        # Load ground truth fingerprints
-        fp_map = {}
-        with open(note_path, "r") as f:
-            for line in f:
-                filename, fingerprint = line.strip().split()
-                fp_map[filename] = torch.tensor([int(b) for b in fingerprint])
-
-        avg_acc = []
-        for filename in tqdm(fp_map.keys(), desc=f"Folder {folder}"):
-            img_path = os.path.join(image_folder, filename)
-            image = Image.open(img_path).convert("RGB")
-
-            # Original → attack → tensor
-            attacked = attack_fn(image)
-            pert_tensor = ToTensor()(attacked).unsqueeze(0).cuda()
-
-            # Decode
-            with torch.no_grad():
-                decoded_fp = decoder(pert_tensor).round().long().squeeze()
-                true_fp = fp_map[filename].cuda()
-
-                acc = (decoded_fp == true_fp).float().mean().item()
-                avg_acc.append(acc)
-
-        print(f"[{folder}] Avg bitwise accuracy = {sum(avg_acc) / len(avg_acc):.4f}")
-
-# ----------------------------
-# Run All Attacks
-# ----------------------------
+# ---------- MAIN ----------
 if __name__ == "__main__":
-    run_test(lambda img: jpeg_compress(img, quality=25), "JPEG Compression (Q=25)")
-    run_test(lambda img: blur_image(img, radius=2), "Gaussian Blur (r=2)")
-    run_test(lambda img: ToTensor()(img), "No Attack (baseline)")
+    checkpoint_dir = './_output/cifar10/checkpoints'  # Adjust path if needed
+    bit_length = 64
+    attacks = ['blur', 'noise', 'crop']
+    encoder_path, decoder_path = get_latest_checkpoint_pair(checkpoint_dir, bit_length)
+    test_fragility_all_attacks(encoder_path, decoder_path, attacks)
