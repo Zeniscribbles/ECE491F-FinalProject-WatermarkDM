@@ -208,14 +208,14 @@ def embed_fingerprints():
 
 def main():
 
-    #CHANGES MADE: resolve the actual latest encoder file
+    #CHANGES MADE: Removing this code to make phase 2 the sole control.
     # operate on cifar10 dataset
     # args.encoder_path   = "./_output/cifar10_64/checkpoints/*.pth"
-    if args.encoder_path is None:
-        checkpoint_candidates = sorted(glob.glob("./_output/cifar10_64/checkpoints/*encoder.pth"))
-    if not checkpoint_candidates:
-        raise FileNotFoundError("No encoder checkpoints found in ./_output/cifar10_64/checkpoints/")
-    args.encoder_path = checkpoint_candidates[-1]
+    # if args.encoder_path is None:
+    #    checkpoint_candidates = sorted(glob.glob("./_output/cifar10_64/checkpoints/*encoder.pth"))
+    # if not checkpoint_candidates:
+    #    raise FileNotFoundError("No encoder checkpoints found in ./_output/cifar10_64/checkpoints/")
+    # args.encoder_path = checkpoint_candidates[-1]
     
     # ------------------------------------- #
     # # identical
