@@ -208,11 +208,14 @@ def embed_fingerprints():
 
 def main():
 
+    #CHANGES MADE: resolve the actual latest encoder file
     # operate on cifar10 dataset
     # args.encoder_path   = "./_output/cifar10_64/checkpoints/*.pth"
     if args.encoder_path is None:
-        args.encoder_path = "./_output/cifar10_64/checkpoints/*.pth"
-    args.image_resolution = 32
+        checkpoint_candidates = sorted(glob.glob("./_output/cifar10_64/checkpoints/*encoder.pth"))
+    if not checkpoint_candidates:
+        raise FileNotFoundError("No encoder checkpoints found in ./_output/cifar10_64/checkpoints/")
+    args.encoder_path = checkpoint_candidates[-1]
     
     # ------------------------------------- #
     # # identical
